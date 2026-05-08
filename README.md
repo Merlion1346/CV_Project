@@ -14,10 +14,10 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Pretrain on 300W-LP
-python train_300wlp.py --data_dir /path/to/300W_LP --variant b0 --epochs 50
+python train_300wlp.py --data_dir /path/to/300W_LP --epochs 50
 
 # 2. Fine-tune on KFace
-python train.py --data_dir /path/to/kface_data --variant b0 --epochs 30 \
+python train.py --data_dir /path/to/kface_data --epochs 30 \
   --pretrained_ckpt checkpoints/best_300wlp.pth
 
 # 3. Evaluate
@@ -50,7 +50,7 @@ Two-phase schedule applies automatically:
 | 1 — Warm-up | epochs 1 → `warmup_epochs` | Head + attention only |
 | 2 — Fine-tune | `warmup_epochs + 1` → end | + top 3 backbone blocks (LR ×0.05) |
 
-### Hyperparameters
+### `train.py` Hyperparameters (KFace fine-tuning)
 
 | Argument | Default | Notes |
 |---|---|---|
@@ -60,7 +60,16 @@ Two-phase schedule applies automatically:
 | `--lr` | `3e-4` | AdamW base LR |
 | `--warmup_epochs` | `5` | Phase-1 length |
 | `--epochs` | `50` | Total epochs |
-| `--pretrained_ckpt` | `None` | 300W-LP checkpoint for KFace fine-tuning |
+| `--pretrained_ckpt` | `None` | 300W-LP checkpoint for fine-tuning |
+
+### `train_300wlp.py` Hyperparameters (300W-LP pretraining)
+
+Same arguments as above except:
+
+| Argument | Default | Notes |
+|---|---|---|
+| `--epochs` | `10` | 50 recommended for best results |
+| `--val_ratio` | `0.1` | Validation split |
 
 ---
 
@@ -82,11 +91,23 @@ Two-phase schedule applies automatically:
 
 ## Other Scripts
 
-| Script | Usage |
-|---|---|
-| `predict.py` | Save annotated prediction grid from a dataset |
-| `inference.py` | Real-time webcam demo (Haar cascade, press `q` to quit) |
-| `evaluate.py` | Per-axis MAE + direction accuracy report |
+**Evaluate**
+```bash
+python evaluate.py --checkpoint checkpoints/best.pth --data_dir /path/to/kface_data
+python evaluate.py --checkpoint checkpoints/best.pth --data_dir /path/to/kface_data --save  # export JSON
+```
+Reports per-axis MAE (yaw / pitch / roll) and direction accuracy (front / left / right / up / down).
+
+**Prediction grid**
+```bash
+python predict.py --checkpoint checkpoints/best.pth --data_dir /path/to/kface_data \
+  --num_samples 100 --output_dir predictions/
+```
+
+**Live webcam**
+```bash
+python inference.py --checkpoint checkpoints/best.pth  # press q to quit
+```
 
 ---
 
