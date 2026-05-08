@@ -73,7 +73,7 @@ class RegressionHead(nn.Module):
 class EfficientNetHeadPose(nn.Module):
     """
     Args:
-        variant    : EfficientNet variant — "b3" | "b4" | "b5" | "b6" | "b7"
+        variant    : EfficientNet variant — "b0" | "b1" | ... | "b7"
         pretrained : use ImageNet-pretrained backbone weights
         dropout    : dropout ratio for regression head
     """
@@ -91,7 +91,7 @@ class EfficientNetHeadPose(nn.Module):
 
     def __init__(
         self,
-        variant: str = "b3",
+        variant: str = "b0",
         pretrained: bool = True,
         dropout: float = 0.4,
     ):
@@ -168,7 +168,7 @@ class HeadPoseLoss(nn.Module):
 # Quick sanity check
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
-    model = EfficientNetHeadPose(variant="b3", pretrained=False)
+    model = EfficientNetHeadPose(variant="b0", pretrained=False)
     model.count_parameters()
     out = model(torch.randn(4, 3, 224, 224))
     print("angles:", out.shape)   # (4, 3)

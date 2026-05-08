@@ -14,10 +14,10 @@ pip install -r requirements.txt
 
 ```bash
 # 1. Pretrain on 300W-LP
-python train_300wlp.py --data_dir /path/to/300W_LP --variant b3 --epochs 50
+python train_300wlp.py --data_dir /path/to/300W_LP --variant b0 --epochs 50
 
 # 2. Fine-tune on KFace
-python train.py --data_dir /path/to/kface_data --variant b3 --epochs 30 \
+python train.py --data_dir /path/to/kface_data --variant b0 --epochs 30 \
   --pretrained_ckpt checkpoints/best_300wlp.pth
 
 # 3. Evaluate
