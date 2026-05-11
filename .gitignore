@@ -11,6 +11,7 @@ env/
 # Dataset & large files
 300W_LP/
 300W-LP.zip
+AFLW2000/
 *.zip
 *.tar.gz
 *.tar.bz2
