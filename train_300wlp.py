@@ -56,7 +56,7 @@ from model import EfficientNetHeadPose, HeadPoseLoss
 # ─────────────────────────────────────────────
 IMAGENET_MEAN  = [0.485, 0.456, 0.406]
 IMAGENET_STD   = [0.229, 0.224, 0.225]
-ANGLE_MAX_300W = torch.tensor([90.0, 90.0, 90.0])
+ANGLE_MAX_300W = torch.tensor([99.0, 99.0, 99.0])
 
 
 # ─────────────────────────────────────────────
@@ -93,9 +93,9 @@ def parse_mat(mat_path: str) -> Optional[Tuple[float, float, float]]:
         roll  = math.degrees(roll_rad)
 
         # Clamp to valid range
-        yaw   = max(-90.0, min(90.0, yaw))
-        pitch = max(-90.0, min(90.0, pitch))
-        roll  = max(-90.0, min(90.0, roll))
+        yaw   = max(-99.0, min(99.0, yaw))
+        pitch = max(-99.0, min(99.0, pitch))
+        roll  = max(-99.0, min(99.0, roll))
 
         return yaw, pitch, roll
     except Exception:
@@ -420,7 +420,7 @@ def parse_args():
     p.add_argument("--output_dir",    type=str,   default="./checkpoints")
     p.add_argument("--variant",       type=str,   default="b0",
                    choices=["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])
-    p.add_argument("--epochs",        type=int,   default=10) #50권장
+    p.add_argument("--epochs",        type=int,   default=50) #50권장
     p.add_argument("--warmup_epochs", type=int,   default=5)
     p.add_argument("--batch_size",    type=int,   default=64,
                    help="VRAM 8GB 기준 B0/224 → 64, B5+ → 32 권장")
