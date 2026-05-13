@@ -26,7 +26,7 @@ from model   import EfficientNetHeadPose, HeadPoseLoss
 # ─────────────────────────────────────────────
 # Angle normalization helpers
 # ─────────────────────────────────────────────
-_ANGLE_MAX = torch.tensor([90.0, 90.0, 90.0])
+_ANGLE_MAX = torch.tensor([99.0, 99.0, 99.0])
 
 def normalize(angles, device):
     return angles / _ANGLE_MAX.to(device)

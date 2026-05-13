@@ -9,7 +9,8 @@ from typing import Optional, Dict
 import torch
 import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
@@ -46,15 +47,19 @@ IMAGENET_STD  = [0.229, 0.224, 0.225]
 # ─────────────────────────────────────────────
 def parse_filename(filepath: str) -> Optional[dict]:
     """
-    Parse an AIHub KFace filename and return a record dict.
+    Parse an AIHub KFace filepath and return a record dict.
+    Supports two layouts:
+      - Flat filename: {ID}_{acc}_{light}_{expr}_{pose}.jpg
+      - Folder structure: .../{ID}/{Session}/{Lighting}/{Expression}/{pose}.jpg
     Returns None if the pose code is not in POSE_MAP.
     """
     stem  = os.path.splitext(os.path.basename(filepath))[0]
     parts = stem.split("_")
-    if len(parts) < 5:
-        return None
+    if len(parts) >= 5:
+        code = parts[4].strip().upper()
+    else:
+        code = stem.strip().upper()
 
-    code = parts[4].strip().upper()
     if code.isdigit():
         code = code.zfill(2)
 
@@ -85,6 +90,8 @@ def scan_pose_codes(
                 parts = os.path.splitext(fname)[0].split("_")
                 if len(parts) >= 5:
                     codes.add(parts[4])
+                else:
+                    codes.add(os.path.splitext(fname)[0])
                 count += 1
                 if count >= max_samples:
                     break
@@ -160,13 +167,17 @@ class HeadPoseDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        img = Image.open(row["path"]).convert("RGB")
-        if self.transform:
-            img = self.transform(img)
-
-        angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
-        return img, angles
+        for i in range(len(self.df)):
+            try:
+                row = self.df.iloc[(idx + i) % len(self.df)]
+                img = Image.open(row["path"]).convert("RGB")
+                if self.transform:
+                    img = self.transform(img)
+                angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
+                return img, angles
+            except Exception:
+                continue
+        raise RuntimeError(f"No valid image found near idx={idx}")
 
 
 # ─────────────────────────────────────────────
