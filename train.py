@@ -200,11 +200,16 @@ def train(args):
         if epoch == args.warmup_epochs + 1:
             print("[Train] Phase 2 — backbone top blocks unfrozen")
             model.unfreeze_top_blocks(num_blocks=3)
+            backbone_lr = args.lr * 0.05
             optimizer.add_param_group({
                 "params":       [p for p in model.features.parameters() if p.requires_grad],
-                "lr":           args.lr * 0.05,
+                "lr":           backbone_lr,
                 "weight_decay": args.weight_decay,
             })
+            # Keep scheduler's internal LR lists in sync with the new param group.
+            scheduler.base_lrs.append(backbone_lr)
+            if hasattr(scheduler, "_last_lr"):
+                scheduler._last_lr.append(backbone_lr)
 
         train_m = train_one_epoch(model, loaders["train"], optimizer, criterion,
                                   device, use_amp, scaler)
