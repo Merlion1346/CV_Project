@@ -1,17 +1,27 @@
 """
-EfficientNet Head Pose — Training Script (Regression Only)
+EfficientNet Head Pose — Training Script (Regression Only, 300W-LP)
 Usage:
-    python train.py --data_dir kface_data --batch_size 512 --variant b4 --img_size 380
+    python train.py --data_dir /path/to/300W_LP --batch_size 64 --variant b0
 """
 
 import os
+import math
 import argparse
 import time
+from glob import glob
+from typing import Optional
+
 import numpy as np
+import pandas as pd
+import scipy.io as sio
 import torch
 import torch.optim as optim
 from torch.amp import GradScaler
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
+from sklearn.model_selection import train_test_split
 
 try:
     from tqdm import tqdm
@@ -19,25 +29,105 @@ try:
 except ImportError:
     USE_TQDM = False
 
-from dataset import build_dataframe, get_dataloaders
-from model   import EfficientNetHeadPose, HeadPoseLoss
+from model import EfficientNetHeadPose, HeadPoseLoss
 
 
 # ─────────────────────────────────────────────
-# Angle normalization helpers
+# Constants
 # ─────────────────────────────────────────────
-_ANGLE_MAX = torch.tensor([99.0, 99.0, 99.0])
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
+_ANGLE_MAX    = torch.tensor([99.0, 99.0, 99.0])
 
+
+# ─────────────────────────────────────────────
+# Angle helpers
+# ─────────────────────────────────────────────
 def normalize(angles, device):
     return angles / _ANGLE_MAX.to(device)
 
 def to_degrees(norm):
-    """Denormalize → degrees (CPU)."""
     return norm.cpu() * _ANGLE_MAX
 
 
 # ─────────────────────────────────────────────
-# Metrics
+# 300W-LP data loading
+# ─────────────────────────────────────────────
+def parse_mat(mat_path: str) -> Optional[tuple]:
+    """300W-LP .mat → (yaw, pitch, roll) in degrees."""
+    try:
+        mat  = sio.loadmat(mat_path)
+        pose = mat["Pose_Para"][0]
+        pitch = math.degrees(pose[0])
+        yaw   = math.degrees(pose[1])
+        roll  = math.degrees(pose[2])
+        yaw   = max(-99.0, min(99.0, yaw))
+        pitch = max(-99.0, min(99.0, pitch))
+        roll  = max(-99.0, min(99.0, roll))
+        return yaw, pitch, roll
+    except Exception:
+        return None
+
+
+def build_dataframe(root_dir: str) -> pd.DataFrame:
+    records, skipped = [], 0
+    img_paths = glob(os.path.join(root_dir, "**", "*.jpg"), recursive=True)
+    print(f"[300W-LP] Found {len(img_paths)} images, parsing annotations...")
+
+    bar = tqdm(img_paths) if USE_TQDM else img_paths
+    for img_path in bar:
+        mat_path = os.path.splitext(img_path)[0] + ".mat"
+        if not os.path.exists(mat_path):
+            skipped += 1
+            continue
+        angles = parse_mat(mat_path)
+        if angles is None:
+            skipped += 1
+            continue
+        yaw, pitch, roll = angles
+        records.append({"path": img_path, "yaw": yaw, "pitch": pitch, "roll": roll})
+
+    df = pd.DataFrame(records)
+    print(f"[300W-LP] Parsed: {len(df)} | Skipped: {skipped}")
+    return df
+
+
+def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compose:
+    if mode == "train":
+        return transforms.Compose([
+            transforms.Resize((img_size + 32, img_size + 32)),
+            transforms.RandomCrop(img_size),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
+            transforms.RandomGrayscale(p=0.05),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ])
+    return transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
+
+
+class HeadPoseDataset(Dataset):
+    def __init__(self, df: pd.DataFrame, transform=None):
+        self.df        = df.reset_index(drop=True)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+        img = Image.open(row["path"]).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
+        return img, angles
+
+
+# ─────────────────────────────────────────────
+# Metrics / utils
 # ─────────────────────────────────────────────
 def mae_per_axis(pred_norm, tgt_norm):
     return (to_degrees(pred_norm) - to_degrees(tgt_norm)).abs().mean(dim=0)
@@ -54,9 +144,7 @@ def has_nan(tensor: torch.Tensor, tag: str) -> bool:
 # ─────────────────────────────────────────────
 def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler):
     model.train()
-    total_loss = 0.0
-    all_mae    = []
-    skipped    = 0
+    total_loss, all_mae, skipped = 0.0, [], 0
 
     bar = tqdm(loader, desc="  train", leave=False) if USE_TQDM else loader
 
@@ -106,8 +194,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler
 @torch.no_grad()
 def validate(model, loader, criterion, device, use_amp):
     model.eval()
-    total_loss = 0.0
-    all_mae    = []
+    total_loss, all_mae = 0.0, []
 
     for imgs, angles in loader:
         imgs    = imgs.to(device, non_blocking=True)
@@ -153,14 +240,31 @@ def train(args):
 
     # ── Data ──────────────────────────────────
     df = build_dataframe(args.data_dir)
-    loaders = get_dataloaders(
-        df,
-        val_ratio=args.val_ratio,
-        test_ratio=0.05,
-        batch_size=args.batch_size,
-        img_size=args.img_size,
-        num_workers=args.num_workers if args.num_workers >= 0 else min(os.cpu_count(), 8),
-    )
+    if len(df) == 0:
+        print("[ERROR] No data found. Check --data_dir path.")
+        return
+
+    train_df, temp_df = train_test_split(df, test_size=args.val_ratio + 0.05, random_state=42)
+    val_df, test_df   = train_test_split(temp_df, test_size=0.05 / (args.val_ratio + 0.05), random_state=42)
+    print(f"[Split] Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
+
+    pin = torch.cuda.is_available()
+    nw  = args.num_workers if args.num_workers >= 0 else min(os.cpu_count(), 8)
+    loaders = {
+        split: DataLoader(
+            HeadPoseDataset(sdf, get_transforms(mode, args.img_size)),
+            batch_size=args.batch_size,
+            shuffle=(split == "train"),
+            num_workers=nw,
+            pin_memory=pin,
+            persistent_workers=(nw > 0),
+        )
+        for split, sdf, mode in [
+            ("train", train_df, "train"),
+            ("val",   val_df,   "val"),
+            ("test",  test_df,  "val"),
+        ]
+    }
 
     # ── Model ─────────────────────────────────
     model = EfficientNetHeadPose(
@@ -168,13 +272,6 @@ def train(args):
         pretrained=True,
         dropout=args.dropout,
     ).to(device)
-
-    # 300W-LP 사전학습 가중치 로드 (선택)
-    if args.pretrained_ckpt:
-        ckpt = torch.load(args.pretrained_ckpt, map_location=device)
-        model.load_state_dict(ckpt["model"], strict=False)
-        print(f"[Train] Loaded pretrained weights: {args.pretrained_ckpt}")
-
     model.count_parameters()
     model.freeze_backbone(True)
 
@@ -196,7 +293,6 @@ def train(args):
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
 
-        # Phase 2: unfreeze top backbone blocks
         if epoch == args.warmup_epochs + 1:
             print("[Train] Phase 2 — backbone top blocks unfrozen")
             model.unfreeze_top_blocks(num_blocks=3)
@@ -206,7 +302,6 @@ def train(args):
                 "lr":           backbone_lr,
                 "weight_decay": args.weight_decay,
             })
-            # Keep scheduler's internal LR lists in sync with the new param group.
             scheduler.base_lrs.append(backbone_lr)
             if hasattr(scheduler, "_last_lr"):
                 scheduler._last_lr.append(backbone_lr)
@@ -216,7 +311,6 @@ def train(args):
         val_m   = validate(model, loaders["val"], criterion, device, use_amp)
         scheduler.step()
 
-        # ── Log ───────────────────────────────
         elapsed = time.time() - t0
         log = (f"Epoch [{epoch:03d}/{args.epochs}] ({elapsed:.1f}s) | "
                f"Train: {train_m['loss']:.4f} | Val: {val_m['loss']:.4f}")
@@ -226,7 +320,6 @@ def train(args):
                     f"Roll:{val_m['mae_roll']:.1f}°")
         print(log)
 
-        # ── Save best checkpoint (by val MAE mean) ────────────
         val_mae_mean = (val_m.get("mae_yaw", float("inf")) +
                         val_m.get("mae_pitch", float("inf")) +
                         val_m.get("mae_roll", float("inf"))) / 3.0
@@ -238,6 +331,7 @@ def train(args):
                 "optimizer":   optimizer.state_dict(),
                 "best_metric": best_mae,
                 "variant":     args.variant,
+                "dataset":     "300W-LP",
             }, best_ckpt_path)
 
     # ── Final test ────────────────────────────
@@ -252,8 +346,9 @@ def train(args):
 # CLI
 # ─────────────────────────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="EfficientNet Head Pose — Regression Training")
-    p.add_argument("--data_dir",      type=str,   required=True)
+    p = argparse.ArgumentParser(description="EfficientNet Head Pose — 300W-LP Training")
+    p.add_argument("--data_dir",      type=str,   required=True,
+                   help="Path to 300W_LP root directory")
     p.add_argument("--output_dir",    type=str,   default="./checkpoints")
     p.add_argument("--variant",       type=str,   default="b0",
                    choices=["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])
@@ -265,10 +360,8 @@ def parse_args():
     p.add_argument("--lr",            type=float, default=3e-4)
     p.add_argument("--weight_decay",  type=float, default=1e-4)
     p.add_argument("--dropout",       type=float, default=0.3)
-    p.add_argument("--val_ratio",     type=float, default=0.15)
+    p.add_argument("--val_ratio",     type=float, default=0.1)
     p.add_argument("--num_workers",   type=int,   default=4)
-    p.add_argument("--pretrained_ckpt", type=str, default=None,
-                   help="Path to 300W-LP pretrained checkpoint for finetuning")
     return p.parse_args()
 
 
