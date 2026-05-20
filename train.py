@@ -189,7 +189,7 @@ def train(args):
     scaler    = GradScaler(device="cuda" if use_amp else "cpu", enabled=use_amp)
     criterion = HeadPoseLoss()
 
-    best_loss      = float("inf")
+    best_mae       = float("inf")
     best_ckpt_path = os.path.join(args.output_dir, "best.pth")
 
     # ── Epoch loop ────────────────────────────
@@ -226,14 +226,17 @@ def train(args):
                     f"Roll:{val_m['mae_roll']:.1f}°")
         print(log)
 
-        # ── Save best checkpoint ───────────────
-        if not np.isnan(val_m["loss"]) and val_m["loss"] < best_loss:
-            best_loss = val_m["loss"]
+        # ── Save best checkpoint (by val MAE mean) ────────────
+        val_mae_mean = (val_m.get("mae_yaw", float("inf")) +
+                        val_m.get("mae_pitch", float("inf")) +
+                        val_m.get("mae_roll", float("inf"))) / 3.0
+        if val_mae_mean < best_mae:
+            best_mae = val_mae_mean
             save_checkpoint({
                 "epoch":       epoch,
                 "model":       model.state_dict(),
                 "optimizer":   optimizer.state_dict(),
-                "best_metric": best_loss,
+                "best_metric": best_mae,
                 "variant":     args.variant,
             }, best_ckpt_path)
 

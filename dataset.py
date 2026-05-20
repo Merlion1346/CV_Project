@@ -4,6 +4,7 @@ Filename format: {ID}_{accessory}_{lighting}_{expression}_{pose}.jpg
 """
 
 import os
+import random
 from typing import Optional, Dict
 
 import torch
@@ -137,7 +138,6 @@ def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compo
         return transforms.Compose([
             transforms.Resize((img_size + 32, img_size + 32)),
             transforms.RandomCrop(img_size),
-            transforms.RandomHorizontalFlip(p=0.3),
             transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
             transforms.RandomGrayscale(p=0.05),
             transforms.ToTensor(),
@@ -159,9 +159,11 @@ class HeadPoseDataset(Dataset):
     task 인자는 하위 호환성을 위해 유지하지만 무시됩니다.
     """
 
-    def __init__(self, df: pd.DataFrame, transform=None, task: str = "regression"):
+    def __init__(self, df: pd.DataFrame, transform=None, task: str = "regression",
+                 flip_prob: float = 0.5):
         self.df        = df.reset_index(drop=True)
         self.transform = transform
+        self.flip_prob = flip_prob
 
     def __len__(self) -> int:
         return len(self.df)
@@ -171,9 +173,17 @@ class HeadPoseDataset(Dataset):
             try:
                 row = self.df.iloc[(idx + i) % len(self.df)]
                 img = Image.open(row["path"]).convert("RGB")
+
+                yaw, pitch, roll = row["yaw"], row["pitch"], row["roll"]
+
+                # Horizontal flip: negate yaw (mirror left↔right reverses head turn direction)
+                if random.random() < self.flip_prob:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                    yaw = -yaw
+
                 if self.transform:
                     img = self.transform(img)
-                angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
+                angles = torch.tensor([yaw, pitch, roll], dtype=torch.float32)
                 return img, angles
             except Exception:
                 continue

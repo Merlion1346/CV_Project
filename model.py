@@ -154,11 +154,13 @@ class EfficientNetHeadPose(nn.Module):
 # Loss
 # ─────────────────────────────────────────────
 class HeadPoseLoss(nn.Module):
-    """MSE regression loss for (yaw, pitch, roll)."""
+    """Huber (smooth L1) regression loss for (yaw, pitch, roll).
+    Less sensitive to outlier frames than MSE while still penalising large errors.
+    delta=0.1 in normalised space ≈ ~10° threshold before switching to linear."""
 
-    def __init__(self):
+    def __init__(self, delta: float = 0.1):
         super().__init__()
-        self.reg_loss = nn.MSELoss()
+        self.reg_loss = nn.HuberLoss(delta=delta)
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         return self.reg_loss(preds, targets)

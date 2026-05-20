@@ -34,7 +34,7 @@ from model import EfficientNetHeadPose
 # ── Constants ─────────────────────────────────
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
-ANGLE_MAX     = 90.0   # our model normalises by ÷90°
+ANGLE_MAX     = 99.0   # must match training normalization (÷99°)
 
 
 # ── Dataset ───────────────────────────────────

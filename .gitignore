@@ -23,6 +23,7 @@ checkpoints/
 *.pt
 *.ckpt
 *.bin
+*.onnx
 
 # Training outputs
 outputs/
@@ -60,3 +61,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# key
+key/*.pem
