@@ -18,12 +18,7 @@ k_face/
 *.tar.bz2
 
 # Model checkpoints & weights
-checkpoints/
-*.pth
-*.pt
-*.ckpt
-*.bin
-*.onnx
+
 
 # Training outputs
 outputs/
