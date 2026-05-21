@@ -23,6 +23,10 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from sklearn.model_selection import train_test_split
+import csv
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 try:
     from tqdm import tqdm
@@ -38,14 +42,17 @@ from model import EfficientNetHeadPose, HeadPoseLoss
 # ─────────────────────────────────────────────
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
-_ANGLE_MAX    = torch.tensor([99.0, 99.0, 99.0])
+_ANGLE_MAX        = torch.tensor([99.0, 99.0, 99.0])
+_ANGLE_MAX_DEVICE: dict = {}
 
 
 # ─────────────────────────────────────────────
 # Angle helpers
 # ─────────────────────────────────────────────
 def normalize(angles, device):
-    return angles / _ANGLE_MAX.to(device)
+    if device not in _ANGLE_MAX_DEVICE:
+        _ANGLE_MAX_DEVICE[device] = _ANGLE_MAX.to(device)
+    return angles / _ANGLE_MAX_DEVICE[device]
 
 def to_degrees(norm):
     return norm.cpu() * _ANGLE_MAX
@@ -59,8 +66,8 @@ def parse_mat(mat_path: str) -> Optional[tuple]:
     try:
         mat  = sio.loadmat(mat_path)
         pose = mat["Pose_Para"][0]
-        pitch = math.degrees(pose[0])
         yaw   = math.degrees(pose[1])
+        pitch = math.degrees(pose[0])
         roll  = math.degrees(pose[2])
         yaw   = max(-99.0, min(99.0, yaw))
         pitch = max(-99.0, min(99.0, pitch))
@@ -251,6 +258,47 @@ def save_checkpoint(state: dict, path: str):
 
 
 # ─────────────────────────────────────────────
+# Log / Plot
+# ─────────────────────────────────────────────
+def _style_ax(ax, title: str, ylabel: str):
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True)
+
+
+def plot_training_curves(history: list[dict], output_dir: str):
+    epochs, train_loss, val_loss = [], [], []
+    mae_ep, mae_yaw, mae_pitch, mae_roll = [], [], [], []
+    for r in history:
+        epochs.append(r["epoch"])
+        train_loss.append(r["train_loss"])
+        val_loss.append(r["val_loss"])
+        if r["val_mae_yaw"] is not None:
+            mae_ep.append(r["epoch"])
+            mae_yaw.append(r["val_mae_yaw"])
+            mae_pitch.append(r["val_mae_pitch"])
+            mae_roll.append(r["val_mae_roll"])
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+    axes[0].plot(epochs, train_loss, label="Train Loss")
+    axes[0].plot(epochs, val_loss,   label="Val Loss")
+    _style_ax(axes[0], "Training & Validation Loss", "Loss")
+
+    if mae_ep:
+        axes[1].plot(mae_ep, mae_yaw,   label="Yaw MAE")
+        axes[1].plot(mae_ep, mae_pitch, label="Pitch MAE")
+        axes[1].plot(mae_ep, mae_roll,  label="Roll MAE")
+        _style_ax(axes[1], "Validation MAE per Axis", "MAE (degrees)")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "training_plot.png"), dpi=150)
+    plt.close(fig)
+
+
+# ─────────────────────────────────────────────
 # Training loop
 # ─────────────────────────────────────────────
 def train(args):
@@ -319,6 +367,16 @@ def train(args):
     best_mae       = float("inf")
     best_ckpt_path = os.path.join(args.output_dir, "best.pth")
 
+    # ── Log file ──────────────────────────────
+    os.makedirs(args.output_dir, exist_ok=True)
+    log_path = os.path.join(args.output_dir, "train_log.csv")
+    log_f    = open(log_path, "w", newline="")
+    log_csv  = csv.writer(log_f)
+    log_csv.writerow(["epoch", "train_loss", "val_loss",
+                      "val_mae_yaw", "val_mae_pitch", "val_mae_roll"])
+    print(f"[Log] {log_path}")
+    log_history: list[dict] = []
+
     # ── Epoch loop ────────────────────────────
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -350,6 +408,20 @@ def train(args):
                     f"Roll:{val_m['mae_roll']:.1f}°")
         print(log)
 
+        # ── CSV + plot ────────────────────────
+        row = {
+            "epoch":         epoch,
+            "train_loss":    train_m["loss"],
+            "val_loss":      val_m["loss"],
+            "val_mae_yaw":   val_m.get("mae_yaw"),
+            "val_mae_pitch": val_m.get("mae_pitch"),
+            "val_mae_roll":  val_m.get("mae_roll"),
+        }
+        log_history.append(row)
+        log_csv.writerow([v if v is not None else "" for v in row.values()])
+        log_f.flush()
+        plot_training_curves(log_history, args.output_dir)
+
         val_mae_mean = (val_m.get("mae_yaw", float("inf")) +
                         val_m.get("mae_pitch", float("inf")) +
                         val_m.get("mae_roll", float("inf"))) / 3.0
@@ -363,6 +435,8 @@ def train(args):
                 "variant":     args.variant,
                 "dataset":     "300W-LP",
             }, best_ckpt_path)
+
+    log_f.close()
 
     # ── Final test ────────────────────────────
     if os.path.exists(best_ckpt_path):
