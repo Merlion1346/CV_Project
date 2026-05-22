@@ -6,6 +6,7 @@ Usage:
 
 import os
 import math
+import random
 import argparse
 import time
 from glob import glob
@@ -134,9 +135,10 @@ def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compo
 
 
 class HeadPoseDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, transform=None):
+    def __init__(self, df: pd.DataFrame, transform=None, flip_prob: float = 0.5):
         self.df        = df.reset_index(drop=True)
         self.transform = transform
+        self.flip_prob = flip_prob
 
     def __len__(self):
         return len(self.df)
@@ -144,9 +146,13 @@ class HeadPoseDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         img = Image.open(row["path"]).convert("RGB")
+        yaw, pitch, roll = row["yaw"], row["pitch"], row["roll"]
+        if random.random() < self.flip_prob:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            yaw = -yaw
         if self.transform:
             img = self.transform(img)
-        angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
+        angles = torch.tensor([yaw, pitch, roll], dtype=torch.float32)
         return img, angles
 
 
