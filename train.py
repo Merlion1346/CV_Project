@@ -320,7 +320,7 @@ def plot_training_curves(history: list[dict], output_dir: str):
 # ─────────────────────────────────────────────
 def train(args):
     if _is_colab():
-        if not os.path.isdir("/content/drive"):
+        if not os.path.isdir("/content/drive/MyDrive"):
             raise RuntimeError(
                 "[Colab] Google Drive not mounted.\n"
                 "  Run first:  from google.colab import drive; drive.mount('/content/drive')"
