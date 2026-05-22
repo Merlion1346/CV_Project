@@ -16,15 +16,31 @@ pip install -r requirements.txt
 # 1. Train on 300W-LP
 python train.py --data_dir /path/to/300W_LP --epochs 50
 
-# 2. Evaluate on AFLW2000-3D
+# 2. Resume interrupted training
+python train.py --data_dir /path/to/300W_LP --resume
+
+# 3. Evaluate on AFLW2000-3D
 python evaluate_aflw2000.py --checkpoint checkpoints/best.pth --data_dir AFLW2000/
 
-# 3. Evaluate on KFace
+# 4. Evaluate on KFace
 python evaluate.py --checkpoint checkpoints/best.pth --data_dir /path/to/kface_data
 
-# 4. Live webcam demo
+# 5. Live webcam demo
 python inference.py --checkpoint checkpoints/best.pth
 ```
+
+---
+
+## Benchmark
+
+Evaluated on AFLW2000-3D (2000 samples), HopeNet protocol:
+
+| Axis | MAE |
+|---|---|
+| Yaw | 5.13° |
+| Pitch | 9.63° |
+| Roll | 9.74° |
+| **Mean** | **8.16°** |
 
 ---
 
@@ -33,7 +49,7 @@ python inference.py --checkpoint checkpoints/best.pth
 | Component | Detail |
 |---|---|
 | Backbone | EfficientNet B0–B7 (ImageNet pretrained) |
-| Pooling | GeMPooling (replaces AdaptiveAvgPool2d) |
+| Pooling | AdaptiveAvgPool2d |
 | Attention | Channel Attention (lightweight CBAM) |
 | Head | Linear 512 → 128 → 3 · BN · SiLU · Dropout |
 | Output | Normalized [−1, 1] → ×99° = degrees |
@@ -54,9 +70,10 @@ Two-phase schedule applies automatically:
 
 | Transform | Detail |
 |---|---|
-| Horizontal flip | Yaw and roll signs flipped to maintain label consistency |
-| Random rotation | ±15° with roll label correction |
-| Color jitter | Applied during training |
+| Horizontal flip | p=0.5; yaw sign flipped to maintain label consistency |
+| Random crop | Resize to img_size+32, then crop to img_size |
+| Color jitter | brightness/contrast ±0.3, saturation ±0.2 |
+| Random grayscale | p=0.05 |
 
 ### `train.py` Hyperparameters
 
@@ -72,6 +89,7 @@ Two-phase schedule applies automatically:
 | `--epochs` | `50` | Total epochs |
 | `--val_ratio` | `0.1` | Validation split |
 | `--num_workers` | `4` | DataLoader workers |
+| `--resume` | `False` | Resume training from `last.pth` |
 
 ### Training Outputs
 
@@ -79,7 +97,8 @@ Each run writes to `--output_dir` (default: `./checkpoints/`):
 
 | File | Description |
 |---|---|
-| `best.pth` | Best validation-loss checkpoint |
+| `best.pth` | Best checkpoint by validation MAE |
+| `last.pth` | Latest checkpoint (used by `--resume`) |
 | `train_log.csv` | Per-epoch metrics (loss, MAE per axis) |
 | `training_plot.png` | Loss and MAE curves (updated every epoch) |
 | `tb/` | TensorBoard event files |
@@ -144,15 +163,15 @@ python inference.py --checkpoint checkpoints/best.pth  # press q to quit
 ## Project Structure
 
 ```
-├── model.py                  # EfficientNetHeadPose, GeMPooling, HeadPoseLoss
+├── model.py                  # EfficientNetHeadPose, ChannelAttention, HeadPoseLoss
 ├── dataset.py                # KFace parser and DataLoader
-├── train.py                  # 300W-LP training
+├── train.py                  # 300W-LP training (TensorBoard, CSV log, resume)
 ├── evaluate.py               # KFace evaluation
 ├── evaluate_aflw2000.py      # AFLW2000-3D evaluation (HopeNet protocol)
 ├── predict.py                # Batch visualization
 ├── inference.py              # Webcam inference
 ├── export_onnx.py            # ONNX export
 ├── qai_hub_profile.py        # QAI Hub profiling
-├── checkpoints/              # Model weights + train_log.csv + training_plot.png  (gitignored)
+├── checkpoints/              # best.pth, last.pth, train_log.csv, training_plot.png, tb/
 └── 300W_LP/                  # Dataset                                            (gitignored)
 ```
