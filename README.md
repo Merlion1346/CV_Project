@@ -70,7 +70,6 @@ Two-phase schedule applies automatically:
 
 | Transform | Detail |
 |---|---|
-| Horizontal flip | p=0.5; yaw sign flipped to maintain label consistency |
 | Random crop | Resize to img_size+32, then crop to img_size |
 | Color jitter | brightness/contrast ±0.3, saturation ±0.2 |
 | Random grayscale | p=0.05 |
