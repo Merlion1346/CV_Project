@@ -163,11 +163,11 @@ class HeadPoseDataset(Dataset):
             yaw  = -yaw
             roll = -roll
 
-        # Random rotation: image rotates CCW by angle → roll increases by angle
+        # Random rotation: PIL rotate(+angle) = CCW; 300W-LP positive roll = CW → roll decreases
         if self.rot_aug:
             angle = random.uniform(-self.rot_max, self.rot_max)
             img   = img.rotate(angle, resample=Image.BILINEAR, expand=False)
-            roll  = max(-99.0, min(99.0, roll + angle))
+            roll  = max(-99.0, min(99.0, roll - angle))
 
         if self.transform:
             img = self.transform(img)

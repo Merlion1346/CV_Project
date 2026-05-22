@@ -171,9 +171,10 @@ class EfficientNetHeadPose(nn.Module):
 # ─────────────────────────────────────────────
 class HeadPoseLoss(nn.Module):
     """Per-axis weighted Huber loss for (yaw, pitch, roll).
-    axis_weights upweights pitch/roll since they are harder to learn."""
+    delta=1.0 keeps L2 regime for most of training (normalized outputs in [-1,1]).
+    axis_weights: yaw gets higher weight since it has larger angular range (±99°)."""
 
-    def __init__(self, delta: float = 0.1, axis_weights: tuple = (1.0, 1.5, 1.5)):
+    def __init__(self, delta: float = 1.0, axis_weights: tuple = (1.0, 1.0, 1.0)):
         super().__init__()
         self.huber = nn.HuberLoss(delta=delta, reduction="none")
         self.register_buffer("weights", torch.tensor(axis_weights))
