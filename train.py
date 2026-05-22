@@ -6,7 +6,6 @@ Usage:
 
 import os
 import math
-import random
 import argparse
 import time
 from glob import glob
@@ -135,19 +134,9 @@ def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compo
 
 
 class HeadPoseDataset(Dataset):
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        transform=None,
-        flip_aug: bool = False,
-        rot_aug: bool = False,
-        rot_max: float = 15.0,
-    ):
+    def __init__(self, df: pd.DataFrame, transform=None):
         self.df        = df.reset_index(drop=True)
         self.transform = transform
-        self.flip_aug  = flip_aug
-        self.rot_aug   = rot_aug
-        self.rot_max   = rot_max
 
     def __len__(self):
         return len(self.df)
@@ -155,23 +144,9 @@ class HeadPoseDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         img = Image.open(row["path"]).convert("RGB")
-        yaw, pitch, roll = float(row["yaw"]), float(row["pitch"]), float(row["roll"])
-
-        # Horizontal flip: negate yaw and roll (mirror symmetry)
-        if self.flip_aug and random.random() < 0.5:
-            img  = img.transpose(Image.FLIP_LEFT_RIGHT)
-            yaw  = -yaw
-            roll = -roll
-
-        # Random rotation: PIL rotate(+angle) = CCW; 300W-LP positive roll = CW → roll decreases
-        if self.rot_aug:
-            angle = random.uniform(-self.rot_max, self.rot_max)
-            img   = img.rotate(angle, resample=Image.BILINEAR, expand=False)
-            roll  = max(-99.0, min(99.0, roll - angle))
-
         if self.transform:
             img = self.transform(img)
-        angles = torch.tensor([yaw, pitch, roll], dtype=torch.float32)
+        angles = torch.tensor([row["yaw"], row["pitch"], row["roll"]], dtype=torch.float32)
         return img, angles
 
 
@@ -350,12 +325,7 @@ def train(args):
     nw  = args.num_workers if args.num_workers >= 0 else min(os.cpu_count(), 8)
     loaders = {
         split: DataLoader(
-            HeadPoseDataset(
-                sdf,
-                get_transforms(mode, args.img_size),
-                flip_aug=(split == "train"),
-                rot_aug=(split == "train"),
-            ),
+            HeadPoseDataset(sdf, get_transforms(mode, args.img_size)),
             batch_size=args.batch_size,
             shuffle=(split == "train"),
             num_workers=nw,
@@ -387,7 +357,7 @@ def train(args):
     )
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     scaler    = GradScaler(device="cuda" if use_amp else "cpu", enabled=use_amp)
-    criterion = HeadPoseLoss().to(device)
+    criterion = HeadPoseLoss()
 
     best_mae       = float("inf")
     start_epoch    = 1

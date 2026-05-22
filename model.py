@@ -6,7 +6,6 @@ Head:     Regression only — yaw / pitch / roll
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchvision.models import (
     efficientnet_b0, EfficientNet_B0_Weights,
     efficientnet_b1, EfficientNet_B1_Weights,
@@ -17,21 +16,6 @@ from torchvision.models import (
     efficientnet_b6, EfficientNet_B6_Weights,
     efficientnet_b7, EfficientNet_B7_Weights,
 )
-
-
-# ─────────────────────────────────────────────
-# GeM Pooling
-# ─────────────────────────────────────────────
-class GeMPooling(nn.Module):
-    """Generalized Mean Pooling — more discriminative than avg pool."""
-
-    def __init__(self, p: float = 3.0, eps: float = 1e-6):
-        super().__init__()
-        self.p   = nn.Parameter(torch.ones(1) * p)
-        self.eps = eps
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return F.adaptive_avg_pool2d(x.clamp(min=self.eps).pow(self.p), 1).pow(1.0 / self.p)
 
 
 # ─────────────────────────────────────────────
@@ -119,7 +103,7 @@ class EfficientNetHeadPose(nn.Module):
 
         backbone      = model_fn(weights=weights if pretrained else None)
         self.features = backbone.features
-        self.pool     = GeMPooling()
+        self.avgpool  = nn.AdaptiveAvgPool2d(1)
         self.attn     = ChannelAttention(feat_dim)
         self.reg_head = RegressionHead(feat_dim, dropout)
 
@@ -142,7 +126,7 @@ class EfficientNetHeadPose(nn.Module):
     def forward(self, x) -> torch.Tensor:
         feat = self.features(x)     # (B, C, H, W)
         feat = self.attn(feat)      # channel attention
-        feat = self.pool(feat)      # (B, C, 1, 1)
+        feat = self.avgpool(feat)   # (B, C, 1, 1)
         feat = feat.flatten(1)      # (B, C)
         return self.reg_head(feat)  # (B, 3)  — [yaw, pitch, roll]
 
@@ -170,18 +154,16 @@ class EfficientNetHeadPose(nn.Module):
 # Loss
 # ─────────────────────────────────────────────
 class HeadPoseLoss(nn.Module):
-    """Per-axis weighted Huber loss for (yaw, pitch, roll).
-    delta=1.0 keeps L2 regime for most of training (normalized outputs in [-1,1]).
-    axis_weights: yaw gets higher weight since it has larger angular range (±99°)."""
+    """Huber (smooth L1) regression loss for (yaw, pitch, roll).
+    Less sensitive to outlier frames than MSE while still penalising large errors.
+    delta=0.1 in normalised space ≈ ~10° threshold before switching to linear."""
 
-    def __init__(self, delta: float = 1.0, axis_weights: tuple = (1.0, 1.0, 1.0)):
+    def __init__(self, delta: float = 0.1):
         super().__init__()
-        self.huber = nn.HuberLoss(delta=delta, reduction="none")
-        self.register_buffer("weights", torch.tensor(axis_weights))
+        self.reg_loss = nn.HuberLoss(delta=delta)
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        loss = self.huber(preds, targets)   # (B, 3)
-        return (loss * self.weights).mean()
+        return self.reg_loss(preds, targets)
 
 
 # ─────────────────────────────────────────────

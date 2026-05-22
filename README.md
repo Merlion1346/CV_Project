@@ -37,7 +37,7 @@ python inference.py --checkpoint checkpoints/best.pth
 | Attention | Channel Attention (lightweight CBAM) |
 | Head | Linear 512 → 128 → 3 · BN · SiLU · Dropout |
 | Output | Normalized [−1, 1] → ×99° = degrees |
-| Loss | Huber (delta=1.0, equal axis weights) |
+| Loss | Huber loss (smooth L1, delta=0.1) |
 
 ---
 
