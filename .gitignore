@@ -22,6 +22,7 @@ checkpoints/
 *.pth
 *.pt
 *.ckpt
+*.onnx
 
 # Training outputs
 outputs/

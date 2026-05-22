@@ -34,6 +34,23 @@ try:
 except ImportError:
     USE_TQDM = False
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    USE_TB = True
+except ImportError:
+    USE_TB = False
+
+
+def _is_colab() -> bool:
+    try:
+        import google.colab  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+COLAB_OUTPUT_DIR = "/content/drive/cv_checkpoint"
+
 from model import EfficientNetHeadPose, HeadPoseLoss
 
 
@@ -302,6 +319,14 @@ def plot_training_curves(history: list[dict], output_dir: str):
 # Training loop
 # ─────────────────────────────────────────────
 def train(args):
+    if _is_colab():
+        if not os.path.isdir("/content/drive"):
+            raise RuntimeError(
+                "[Colab] Google Drive not mounted.\n"
+                "  Run first:  from google.colab import drive; drive.mount('/content/drive')"
+            )
+        print(f"[Colab] Saving to Google Drive → {args.output_dir}")
+
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = torch.cuda.is_available()
     print(f"[Train] Device: {device} | AMP: {use_amp}")
@@ -369,6 +394,9 @@ def train(args):
 
     # ── Log file ──────────────────────────────
     os.makedirs(args.output_dir, exist_ok=True)
+    writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "tb")) if USE_TB else None
+    if writer:
+        print(f"[TensorBoard] tensorboard --logdir {os.path.join(args.output_dir, 'tb')} --port 30011")
     log_path = os.path.join(args.output_dir, "train_log.csv")
     log_f    = open(log_path, "w", newline="")
     log_csv  = csv.writer(log_f)
@@ -422,6 +450,15 @@ def train(args):
         log_f.flush()
         plot_training_curves(log_history, args.output_dir)
 
+        if writer:
+            writer.add_scalar("Loss/train", train_m["loss"], epoch)
+            writer.add_scalar("Loss/val",   val_m["loss"],   epoch)
+            if "mae_yaw" in val_m:
+                writer.add_scalar("MAE/yaw",   val_m["mae_yaw"],   epoch)
+                writer.add_scalar("MAE/pitch", val_m["mae_pitch"], epoch)
+                writer.add_scalar("MAE/roll",  val_m["mae_roll"],  epoch)
+            writer.add_scalar("LR", optimizer.param_groups[0]["lr"], epoch)
+
         val_mae_mean = (val_m.get("mae_yaw", float("inf")) +
                         val_m.get("mae_pitch", float("inf")) +
                         val_m.get("mae_roll", float("inf"))) / 3.0
@@ -437,6 +474,8 @@ def train(args):
             }, best_ckpt_path)
 
     log_f.close()
+    if writer:
+        writer.close()
 
     # ── Final test ────────────────────────────
     if os.path.exists(best_ckpt_path):
@@ -453,7 +492,8 @@ def parse_args():
     p = argparse.ArgumentParser(description="EfficientNet Head Pose — 300W-LP Training")
     p.add_argument("--data_dir",      type=str,   required=True,
                    help="Path to 300W_LP root directory")
-    p.add_argument("--output_dir",    type=str,   default="./checkpoints")
+    p.add_argument("--output_dir",    type=str,
+                   default=COLAB_OUTPUT_DIR if _is_colab() else "./checkpoints")
     p.add_argument("--variant",       type=str,   default="b0",
                    choices=["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])
     p.add_argument("--epochs",        type=int,   default=50)
