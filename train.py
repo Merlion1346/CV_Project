@@ -49,7 +49,7 @@ def _is_colab() -> bool:
         return False
 
 
-COLAB_OUTPUT_DIR = "/content/drive/cv_checkpoint"
+COLAB_OUTPUT_DIR = "/content/drive/MyDrive/cv_checkpoint"
 
 from model import EfficientNetHeadPose, HeadPoseLoss
 
@@ -390,26 +390,54 @@ def train(args):
     criterion = HeadPoseLoss().to(device)
 
     best_mae       = float("inf")
+    start_epoch    = 1
+    log_history: list[dict] = []
     best_ckpt_path = os.path.join(args.output_dir, "best.pth")
+    last_ckpt_path = os.path.join(args.output_dir, "last.pth")
+
+    # ── Resume ────────────────────────────────
+    os.makedirs(args.output_dir, exist_ok=True)
+    if args.resume and os.path.exists(last_ckpt_path):
+        ckpt = torch.load(last_ckpt_path, map_location=device)
+        # Restore phase-2 param group before loading optimizer state
+        if ckpt["epoch"] >= args.warmup_epochs:
+            model.unfreeze_top_blocks(num_blocks=3)
+            backbone_lr = args.lr * 0.05
+            optimizer.add_param_group({
+                "params":       [p for p in model.features.parameters() if p.requires_grad],
+                "lr":           backbone_lr,
+                "weight_decay": args.weight_decay,
+            })
+            scheduler.base_lrs.append(backbone_lr)
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        scaler.load_state_dict(ckpt["scaler"])
+        best_mae    = ckpt["best_metric"]
+        start_epoch = ckpt["epoch"] + 1
+        log_history = ckpt.get("log_history", [])
+        print(f"[Resume] Epoch {ckpt['epoch']} loaded → continuing from epoch {start_epoch}")
+    elif args.resume:
+        print(f"[Resume] No checkpoint at {last_ckpt_path}, starting fresh")
 
     # ── Log file ──────────────────────────────
-    os.makedirs(args.output_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "tb")) if USE_TB else None
     if writer:
         print(f"[TensorBoard] tensorboard --logdir {os.path.join(args.output_dir, 'tb')} --port 30011")
     log_path = os.path.join(args.output_dir, "train_log.csv")
-    log_f    = open(log_path, "w", newline="")
+    csv_mode = "a" if args.resume and os.path.exists(log_path) else "w"
+    log_f    = open(log_path, csv_mode, newline="")
     log_csv  = csv.writer(log_f)
-    log_csv.writerow(["epoch", "train_loss", "val_loss",
-                      "val_mae_yaw", "val_mae_pitch", "val_mae_roll"])
+    if csv_mode == "w":
+        log_csv.writerow(["epoch", "train_loss", "val_loss",
+                          "val_mae_yaw", "val_mae_pitch", "val_mae_roll"])
     print(f"[Log] {log_path}")
-    log_history: list[dict] = []
 
     # ── Epoch loop ────────────────────────────
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         t0 = time.time()
 
-        if epoch == args.warmup_epochs + 1:
+        if epoch == args.warmup_epochs + 1 and start_epoch <= args.warmup_epochs + 1:
             print("[Train] Phase 2 — backbone top blocks unfrozen")
             model.unfreeze_top_blocks(num_blocks=3)
             backbone_lr = args.lr * 0.05
@@ -473,6 +501,19 @@ def train(args):
                 "dataset":     "300W-LP",
             }, best_ckpt_path)
 
+        # ── last.pth (resume용) ───────────────
+        save_checkpoint({
+            "epoch":       epoch,
+            "model":       model.state_dict(),
+            "optimizer":   optimizer.state_dict(),
+            "scheduler":   scheduler.state_dict(),
+            "scaler":      scaler.state_dict(),
+            "best_metric": best_mae,
+            "variant":     args.variant,
+            "dataset":     "300W-LP",
+            "log_history": log_history,
+        }, last_ckpt_path)
+
     log_f.close()
     if writer:
         writer.close()
@@ -506,6 +547,8 @@ def parse_args():
     p.add_argument("--dropout",       type=float, default=0.3)
     p.add_argument("--val_ratio",     type=float, default=0.1)
     p.add_argument("--num_workers",   type=int,   default=4)
+    p.add_argument("--resume",        action="store_true",
+                   help="Resume from last.pth in output_dir")
     return p.parse_args()
 
 
