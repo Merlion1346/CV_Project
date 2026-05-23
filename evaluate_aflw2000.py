@@ -28,7 +28,7 @@ try:
 except ImportError:
     USE_TQDM = False
 
-from model import EfficientNetHeadPose
+from model import EfficientNetHeadPose, HeadPoseLoss
 
 
 # ── Constants ─────────────────────────────────
@@ -108,7 +108,7 @@ class AFLW2000Dataset(Dataset):
 
 # ── Evaluation loop ───────────────────────────
 @torch.no_grad()
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device):
+def evaluate(model: nn.Module, loader: DataLoader, device: torch.device, criterion: HeadPoseLoss):
     model.eval()
 
     yaw_err   = 0.0
@@ -123,8 +123,8 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device):
         bs     = angles.size(0)
         total += bs
 
-        pred_norm = model(images)                        # (B, 3) normalised
-        pred_deg  = pred_norm.cpu() * ANGLE_MAX          # → degrees
+        logits   = model(images)                         # (B, 3, N_BINS) bin logits
+        pred_deg = criterion.predict(logits).cpu()       # soft-argmax → degrees
 
         label_yaw   = angles[:, 0]
         label_pitch = angles[:, 1]
@@ -198,9 +198,10 @@ def main():
     variant = ckpt.get("variant", args.variant)
     print(f"[Eval] Variant: {variant} | Checkpoint: {args.checkpoint}")
 
-    model = EfficientNetHeadPose(variant=variant, pretrained=False).to(device)
+    model     = EfficientNetHeadPose(variant=variant, pretrained=False).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
+    criterion = HeadPoseLoss().to(device)
 
     dataset = AFLW2000Dataset(args.data_dir, img_size=args.img_size)
     loader  = DataLoader(
@@ -211,7 +212,7 @@ def main():
         pin_memory=device.type == "cuda",
     )
 
-    results = evaluate(model, loader, device)
+    results = evaluate(model, loader, device, criterion)
     print_results(results)
 
 

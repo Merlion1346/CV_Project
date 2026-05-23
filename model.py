@@ -1,7 +1,7 @@
 """
 EfficientNet-based Head Pose Estimation Model
-Backbone: EfficientNet B3–B7 (torchvision)
-Head:     Regression only — yaw / pitch / roll
+Backbone: EfficientNet B0–B7 (torchvision)
+Head:     Soft-argmax binned regression — yaw / pitch / roll
 """
 
 import torch
@@ -40,14 +40,18 @@ class ChannelAttention(nn.Module):
         return x * scale.unsqueeze(-1).unsqueeze(-1)
 
 
-# ─────────────────────────────────────────────
-# Regression Head
-# ─────────────────────────────────────────────
-class RegressionHead(nn.Module):
-    """Predicts normalized yaw / pitch / roll in [-1, 1]."""
+N_BINS = 66  # -99° ~ +99° 를 3° 간격으로 분할
 
-    def __init__(self, in_features: int, dropout: float = 0.4):
+
+# ─────────────────────────────────────────────
+# Binned Head
+# ─────────────────────────────────────────────
+class BinnedHead(nn.Module):
+    """각 축(yaw/pitch/roll)에 대해 N_BINS개 bin logit 출력: (B, 3, N_BINS)."""
+
+    def __init__(self, in_features: int, n_bins: int, dropout: float = 0.4):
         super().__init__()
+        self.n_bins = n_bins
         self.net = nn.Sequential(
             nn.Linear(in_features, 512),
             nn.BatchNorm1d(512),
@@ -57,14 +61,13 @@ class RegressionHead(nn.Module):
             nn.BatchNorm1d(128),
             nn.SiLU(),
             nn.Dropout(dropout * 0.5),
-            nn.Linear(128, 3),
+            nn.Linear(128, 3 * n_bins),
         )
-        # Small init on final layer → stable early loss
         nn.init.xavier_uniform_(self.net[-1].weight, gain=0.01)
         nn.init.zeros_(self.net[-1].bias)
 
     def forward(self, x):
-        return self.net(x)
+        return self.net(x).view(x.size(0), 3, self.n_bins)
 
 
 # ─────────────────────────────────────────────
@@ -105,7 +108,7 @@ class EfficientNetHeadPose(nn.Module):
         self.features = backbone.features
         self.avgpool  = nn.AdaptiveAvgPool2d(1)
         self.attn     = ChannelAttention(feat_dim)
-        self.reg_head = RegressionHead(feat_dim, dropout)
+        self.reg_head = BinnedHead(feat_dim, N_BINS, dropout)
 
         self._init_heads()
 
@@ -128,7 +131,7 @@ class EfficientNetHeadPose(nn.Module):
         feat = self.attn(feat)      # channel attention
         feat = self.avgpool(feat)   # (B, C, 1, 1)
         feat = feat.flatten(1)      # (B, C)
-        return self.reg_head(feat)  # (B, 3)  — [yaw, pitch, roll]
+        return self.reg_head(feat)  # (B, 3, N_BINS) — bin logits per axis
 
     # ── Backbone control ──────────────────────
     def freeze_backbone(self, freeze: bool = True):
@@ -154,16 +157,23 @@ class EfficientNetHeadPose(nn.Module):
 # Loss
 # ─────────────────────────────────────────────
 class HeadPoseLoss(nn.Module):
-    """Huber (smooth L1) regression loss for (yaw, pitch, roll).
-    Less sensitive to outlier frames than MSE while still penalising large errors.
-    delta=0.1 in normalised space ≈ ~10° threshold before switching to linear."""
+    """Soft-argmax + Huber loss (degree space).
 
-    def __init__(self, delta: float = 0.1):
+    logits (B, 3, N_BINS) → softmax → 기댓값(도°) → Huber vs true_deg.
+    delta=3.0°: 3° 이내는 이차, 초과는 선형 패널티.
+    """
+
+    def __init__(self, n_bins: int = N_BINS, angle_max: float = 99.0, delta: float = 3.0):
         super().__init__()
-        self.reg_loss = nn.HuberLoss(delta=delta)
+        self.register_buffer("bin_centers", torch.linspace(-angle_max, angle_max, n_bins))
+        self.huber = nn.HuberLoss(delta=delta)
 
-    def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        return self.reg_loss(preds, targets)
+    def predict(self, logits: torch.Tensor) -> torch.Tensor:
+        """(B, 3, N_BINS) → (B, 3) 예측 각도(도°)."""
+        return (torch.softmax(logits, dim=-1) * self.bin_centers.to(logits.device)).sum(dim=-1)
+
+    def forward(self, logits: torch.Tensor, true_deg: torch.Tensor) -> torch.Tensor:
+        return self.huber(self.predict(logits), true_deg)
 
 
 # ─────────────────────────────────────────────
@@ -173,4 +183,4 @@ if __name__ == "__main__":
     model = EfficientNetHeadPose(variant="b0", pretrained=False)
     model.count_parameters()
     out = model(torch.randn(4, 3, 224, 224))
-    print("angles:", out.shape)   # (4, 3)
+    print("logits:", out.shape)   # (4, 3, 66)

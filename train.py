@@ -154,8 +154,8 @@ class HeadPoseDataset(Dataset):
 # ─────────────────────────────────────────────
 # Metrics / utils
 # ─────────────────────────────────────────────
-def mae_per_axis(pred_norm, tgt_norm):
-    return (to_degrees(pred_norm) - to_degrees(tgt_norm)).abs().mean(dim=0)
+def mae_per_axis(pred_deg: torch.Tensor, tgt_deg: torch.Tensor) -> torch.Tensor:
+    return (pred_deg.cpu() - tgt_deg.cpu()).abs().mean(dim=0)
 
 def has_nan(tensor: torch.Tensor, tag: str) -> bool:
     if torch.isnan(tensor).any() or torch.isinf(tensor).any():
@@ -175,7 +175,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler
 
     for i, (imgs, angles) in enumerate(bar):
         imgs    = imgs.to(device, non_blocking=True)
-        targets = normalize(angles.to(device, non_blocking=True), device)
+        targets = angles.to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -200,7 +200,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler
 
         total_loss += loss.item()
         with torch.no_grad():
-            all_mae.append(mae_per_axis(preds.detach(), targets).numpy())
+            all_mae.append(mae_per_axis(criterion.predict(preds.detach()), targets).numpy())
 
     if skipped:
         print(f"  [WARN] Skipped {skipped} batches (NaN)")
@@ -223,7 +223,7 @@ def validate(model, loader, criterion, device, use_amp):
 
     for imgs, angles in loader:
         imgs    = imgs.to(device, non_blocking=True)
-        targets = normalize(angles.to(device, non_blocking=True), device)
+        targets = angles.to(device, non_blocking=True)
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
             preds = model(imgs)
@@ -231,7 +231,7 @@ def validate(model, loader, criterion, device, use_amp):
 
         if not (torch.isnan(loss) or torch.isinf(loss)):
             total_loss += loss.item()
-        all_mae.append(mae_per_axis(preds, targets).numpy())
+        all_mae.append(mae_per_axis(criterion.predict(preds), targets).numpy())
 
     n      = max(len(loader), 1)
     result = {"loss": total_loss / n}
