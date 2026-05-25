@@ -50,7 +50,7 @@ Evaluated on AFLW2000-3D (2000 samples), HopeNet protocol:
 |---|---|
 | Backbone | EfficientNet B0–B7 (ImageNet pretrained) |
 | Pooling | AdaptiveAvgPool2d |
-| Attention | Channel Attention (lightweight CBAM) |
+| Attention | Spatial Attention (avg+max → Conv2d 7×7 → sigmoid) |
 | Head | Linear 512 → 128 → 3 · BN · SiLU · Dropout |
 | Output | Normalized [−1, 1] → ×99° = degrees |
 | Loss | Huber loss (smooth L1, delta=0.1) |
@@ -162,7 +162,7 @@ python inference.py --checkpoint checkpoints/best.pth  # press q to quit
 ## Project Structure
 
 ```
-├── model.py                  # EfficientNetHeadPose, ChannelAttention, HeadPoseLoss
+├── model.py                  # EfficientNetHeadPose, SpatialAttention, HeadPoseLoss
 ├── dataset.py                # KFace parser and DataLoader
 ├── train.py                  # 300W-LP training (TensorBoard, CSV log, resume)
 ├── evaluate.py               # KFace evaluation

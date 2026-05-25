@@ -19,25 +19,19 @@ from torchvision.models import (
 
 
 # ─────────────────────────────────────────────
-# Channel Attention (lightweight CBAM)
+# Spatial Attention
 # ─────────────────────────────────────────────
-class ChannelAttention(nn.Module):
-    def __init__(self, channels: int, reduction: int = 16):
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size: int = 7):
         super().__init__()
-        mid = channels // reduction
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(channels, mid, bias=False),
-            nn.ReLU(),
-            nn.Linear(mid, channels, bias=False),
-        )
+        self.conv    = nn.Conv2d(2, 1, kernel_size, padding=kernel_size // 2, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        scale = self.sigmoid(self.fc(self.avg_pool(x)) + self.fc(self.max_pool(x)))
-        return x * scale.unsqueeze(-1).unsqueeze(-1)
+        avg   = x.mean(dim=1, keepdim=True)
+        mx    = x.amax(dim=1, keepdim=True)
+        scale = self.sigmoid(self.conv(torch.cat([avg, mx], dim=1)))
+        return x * scale
 
 
 N_BINS = 66  # -99° ~ +99° 를 3° 간격으로 분할
@@ -107,7 +101,7 @@ class EfficientNetHeadPose(nn.Module):
         backbone      = model_fn(weights=weights if pretrained else None)
         self.features = backbone.features
         self.avgpool  = nn.AdaptiveAvgPool2d(1)
-        self.attn     = ChannelAttention(feat_dim)
+        self.attn     = SpatialAttention()
         self.reg_head = BinnedHead(feat_dim, N_BINS, dropout)
 
         self._init_heads()
@@ -124,11 +118,13 @@ class EfficientNetHeadPose(nn.Module):
                 elif isinstance(m, nn.BatchNorm1d):
                     nn.init.ones_(m.weight)
                     nn.init.zeros_(m.bias)
+                elif isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode="fan_out")
 
     # ── Forward ───────────────────────────────
     def forward(self, x) -> torch.Tensor:
         feat = self.features(x)     # (B, C, H, W)
-        feat = self.attn(feat)      # channel attention
+        feat = self.attn(feat)      # spatial attention
         feat = self.avgpool(feat)   # (B, C, 1, 1)
         feat = feat.flatten(1)      # (B, C)
         return self.reg_head(feat)  # (B, 3, N_BINS) — bin logits per axis
