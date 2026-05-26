@@ -1,0 +1,7 @@
+exp,desc,flip_aug,rotation_aug,use_gem,weighted_loss,yaw_mae,pitch_mae,roll_mae,mean_mae
+Exp1_Vanilla,Vanilla EfficientNet-B0,False,False,False,False,8.4007,6.4721,4.9743,6.6157
+Exp2_FlipAug,+ Flip augmentation (yaw/roll 부호 반전),True,False,False,False,8.5247,6.8219,6.1512,7.1659
+Exp3_RotAug,+ Random rotation (roll 보정),True,True,False,False,9.6922,6.8081,7.6478,8.0494
+Exp4_WeightedLoss,+ Weighted loss (pitch/roll 가중치),True,True,False,True,6.7857,7.6162,8.4116,7.6045
+Exp5_GeM,+ GeM pooling,True,True,True,True,6.7115,7.7423,8.0718,7.5085
+Exp6_AllCombined,All combined (최종 모델),True,True,True,True,6.8967,7.6717,9.1958,7.9214
