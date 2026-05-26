@@ -159,6 +159,45 @@ python inference.py --checkpoint checkpoints/best.pth  # press q to quit
 
 ---
 
+## Raspberry Pi Deployment
+
+Tested on **Pi 4 (4GB/8GB)**. Target: 10+ fps real-time with INT8 ONNX Runtime.
+
+### 1. Export on your PC
+
+```bash
+# FP32 → ONNX + INT8 quantization
+python export_onnx.py --checkpoint checkpoints/best.pth \
+  --output model.onnx --quantize --verify
+# Produces: model.onnx (FP32) and model_int8.onnx (INT8)
+```
+
+### 2. Copy to Raspberry Pi
+
+```bash
+scp model_int8.onnx pi@<rpi-ip>:~/head_pose/
+scp inference_rpi.py pi@<rpi-ip>:~/head_pose/
+```
+
+### 3. Install dependencies on Pi
+
+```bash
+pip install onnxruntime opencv-python-headless numpy
+```
+
+### 4. Run
+
+```bash
+python inference_rpi.py --model model_int8.onnx --width 640 --height 480
+```
+
+| Model | Expected fps (Pi 4) |
+|---|---|
+| FP32 ONNX | ~5–7 fps |
+| INT8 ONNX | ~12–18 fps |
+
+---
+
 ## Project Structure
 
 ```
@@ -168,8 +207,9 @@ python inference.py --checkpoint checkpoints/best.pth  # press q to quit
 ├── evaluate.py               # KFace evaluation
 ├── evaluate_aflw2000.py      # AFLW2000-3D evaluation (HopeNet protocol)
 ├── predict.py                # Batch visualization
-├── inference.py              # Webcam inference
-├── export_onnx.py            # ONNX export
+├── inference.py              # Webcam inference (PyTorch)
+├── inference_rpi.py          # Raspberry Pi inference (ONNX Runtime, no PyTorch)
+├── export_onnx.py            # ONNX export + INT8 quantization
 ├── qai_hub_profile.py        # QAI Hub profiling
 ├── checkpoints/              # best.pth, last.pth, train_log.csv, training_plot.png, tb/
 └── 300W_LP/                  # Dataset                                            (gitignored)

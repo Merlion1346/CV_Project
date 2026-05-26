@@ -358,7 +358,7 @@ def train(args):
     )
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     scaler    = GradScaler(device="cuda" if use_amp else "cpu", enabled=use_amp)
-    criterion = HeadPoseLoss()
+    criterion = HeadPoseLoss(axis_weights=(1.0, 2.0, 2.0))
 
     best_mae       = float("inf")
     start_epoch    = 1

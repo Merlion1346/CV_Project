@@ -1,0 +1,39 @@
+# XcodeGen 설정 파일
+# 설치: brew install xcodegen
+# 생성: cd HeadPoseApp && xcodegen generate
+
+name: HeadPoseApp
+
+options:
+  bundleIdPrefix: com.headpose
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  groupSortPosition: top
+
+targets:
+  HeadPoseApp:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: HeadPoseApp
+        excludes:
+          - "**/*.md"
+    resources:
+      - path: HeadPoseApp/Info.plist
+      # HeadPose.mlpackage 를 여기에 추가하거나 Xcode에서 직접 드래그앤드롭
+      # - path: HeadPose.mlpackage
+    info:
+      path: HeadPoseApp/Info.plist
+      properties:
+        NSCameraUsageDescription: "카메라를 사용하여 실시간으로 얼굴 방향(Yaw/Pitch/Roll)을 추정합니다."
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.headpose.HeadPoseApp
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_PREVIEWS: "YES"
