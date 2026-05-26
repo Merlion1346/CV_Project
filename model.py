@@ -172,8 +172,8 @@ class HeadPoseLoss(nn.Module):
         return (torch.softmax(logits, dim=-1) * self.bin_centers.to(logits.device)).sum(dim=-1)
 
     def forward(self, logits: torch.Tensor, true_deg: torch.Tensor) -> torch.Tensor:
-        loss = self.huber(self.predict(logits), true_deg)   # (B, 3)
-        return (loss * self.axis_weights).mean()
+        loss = self.huber(self.predict(logits), true_deg)              # (B, 3)
+        return (loss * self.axis_weights.to(loss.device)).mean()
 
 
 # ─────────────────────────────────────────────
