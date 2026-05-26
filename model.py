@@ -34,7 +34,7 @@ class SpatialAttention(nn.Module):
         return x * scale
 
 
-N_BINS = 66  # -99° ~ +99° 를 3° 간격으로 분할
+N_BINS = 132  # -99° ~ +99° 를 1.5° 간격으로 분할
 
 
 # ─────────────────────────────────────────────
