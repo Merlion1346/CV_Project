@@ -157,19 +157,23 @@ class HeadPoseLoss(nn.Module):
 
     logits (B, 3, N_BINS) → softmax → 기댓값(도°) → Huber vs true_deg.
     delta=3.0°: 3° 이내는 이차, 초과는 선형 패널티.
+    axis_weights: [yaw, pitch, roll] 순서로 loss 가중치 적용.
     """
 
-    def __init__(self, n_bins: int = N_BINS, angle_max: float = 99.0, delta: float = 3.0):
+    def __init__(self, n_bins: int = N_BINS, angle_max: float = 99.0, delta: float = 3.0,
+                 axis_weights: tuple = (1.0, 1.5, 1.5)):
         super().__init__()
         self.register_buffer("bin_centers", torch.linspace(-angle_max, angle_max, n_bins))
-        self.huber = nn.HuberLoss(delta=delta)
+        self.register_buffer("axis_weights", torch.tensor(axis_weights))
+        self.huber = nn.HuberLoss(reduction="none", delta=delta)
 
     def predict(self, logits: torch.Tensor) -> torch.Tensor:
         """(B, 3, N_BINS) → (B, 3) 예측 각도(도°)."""
         return (torch.softmax(logits, dim=-1) * self.bin_centers.to(logits.device)).sum(dim=-1)
 
     def forward(self, logits: torch.Tensor, true_deg: torch.Tensor) -> torch.Tensor:
-        return self.huber(self.predict(logits), true_deg)
+        loss = self.huber(self.predict(logits), true_deg)   # (B, 3)
+        return (loss * self.axis_weights).mean()
 
 
 # ─────────────────────────────────────────────
