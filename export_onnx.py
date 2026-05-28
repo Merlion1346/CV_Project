@@ -82,7 +82,13 @@ def quantize(fp32_path: str, int8_path: str):
         print("[Quantize] onnxruntime not installed — pip install onnxruntime")
         return
 
-    quantize_dynamic(fp32_path, int8_path, weight_type=QuantType.QInt8)
+    # Conv → ConvInteger is not implemented in ONNX Runtime CPU EP on ARM.
+    # Quantize only MatMul/Gemm (attention/FC layers) and skip Conv entirely.
+    quantize_dynamic(
+        fp32_path, int8_path,
+        weight_type=QuantType.QInt8,
+        op_types_to_quantize=["MatMul", "Gemm"],
+    )
     print(f"[Quantize] INT8 model saved → {int8_path}")
 
 
