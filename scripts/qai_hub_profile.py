@@ -29,7 +29,7 @@ DEFAULT_DEVICE = "Snapdragon 8 Gen 2"
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--onnx",         type=str, default="model.onnx",
+    p.add_argument("--onnx",         type=str, default="models/model.onnx",
                    help="Path to exported ONNX model")
     p.add_argument("--device",       type=str, default=DEFAULT_DEVICE,
                    help="AI Hub device name")

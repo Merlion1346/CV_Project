@@ -506,16 +506,16 @@ def parse_args():
                    help="Path to 300W_LP root directory")
     p.add_argument("--output_dir",    type=str,
                    default=COLAB_OUTPUT_DIR if _is_colab() else "./models/checkpoints")
-    p.add_argument("--variant",       type=str,   default="b0",
+    p.add_argument("--variant",       type=str,   default="b3",
                    choices=["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])
     p.add_argument("--epochs",        type=int,   default=50)
     p.add_argument("--warmup_epochs", type=int,   default=5)
-    p.add_argument("--batch_size",    type=int,   default=64,
-                   help="VRAM 8GB 기준 B0/224 → 64, B5+ → 32 권장")
-    p.add_argument("--img_size",      type=int,   default=224)
-    p.add_argument("--lr",            type=float, default=3e-4)
+    p.add_argument("--batch_size",    type=int,   default=128,
+                   help="VRAM 8GB 기준 B0/224 → 64, B5+ → 32 권장 / L4 24GB B3/300 → 128")
+    p.add_argument("--img_size",      type=int,   default=300)
+    p.add_argument("--lr",            type=float, default=1e-4)
     p.add_argument("--weight_decay",  type=float, default=1e-4)
-    p.add_argument("--dropout",       type=float, default=0.3)
+    p.add_argument("--dropout",       type=float, default=0.5)
     p.add_argument("--val_ratio",     type=float, default=0.1)
     p.add_argument("--num_workers",   type=int,   default=4)
     p.add_argument("--resume",        action="store_true",

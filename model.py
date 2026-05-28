@@ -160,7 +160,7 @@ class HeadPoseLoss(nn.Module):
     axis_weights: [yaw, pitch, roll] 순서로 loss 가중치 적용.
     """
 
-    def __init__(self, n_bins: int = N_BINS, angle_max: float = 99.0, delta: float = 3.0,
+    def __init__(self, n_bins: int = N_BINS, angle_max: float = 99.0, delta: float = 5.0,
                  axis_weights: tuple = (1.0, 1.5, 1.5)):
         super().__init__()
         self.register_buffer("bin_centers", torch.linspace(-angle_max, angle_max, n_bins))
