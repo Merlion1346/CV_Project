@@ -11,8 +11,9 @@ Usage:
     # FP32 export + verify
     python export_onnx.py --checkpoint checkpoints/best.pth --output model.onnx --verify
 
-    # INT8 dynamic quantization (recommended for Raspberry Pi)
-    python export_onnx.py --checkpoint checkpoints/best.pth --output model.onnx --quantize
+    # INT8 static quantization (QDQ format, required for Raspberry Pi / aarch64)
+    python export_onnx.py --checkpoint checkpoints/best.pth --output model.onnx \\
+        --quantize --calib_dir data/AFLW2000 --n_calib 200
 """
 
 import argparse
@@ -75,21 +76,80 @@ def export(model, img_size: int, output_path: str):
     print(f"         Output: angles_deg (B, 3)  — [yaw, pitch, roll] in degrees")
 
 
-def quantize(fp32_path: str, int8_path: str):
+class FaceImageCalibReader:
+    """Calibration data reader using real face images.
+
+    Applies the same preprocessing as HeadPosePredictor so that scale/zero-point
+    values are calibrated on the actual input distribution.
+    """
+
+    def __init__(self, image_dir: str, n: int = 200):
+        import cv2
+        import os
+        self._batches = []
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+        fnames = [f for f in os.listdir(image_dir)
+                  if f.lower().endswith((".jpg", ".jpeg", ".png"))][:n]
+        if not fnames:
+            raise ValueError(f"[Quantize] No images found in {image_dir}")
+
+        for fname in fnames:
+            img = cv2.imread(os.path.join(image_dir, fname))
+            if img is None:
+                continue
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.resize(img, (224, 224)).astype(np.float32) / 255.0
+            img = (img - mean) / std
+            img = img.transpose(2, 0, 1)[np.newaxis]   # HWC → 1CHW
+            self._batches.append({"image": img})
+
+        print(f"[Quantize] Calibration set: {len(self._batches)} images from {image_dir}")
+        self._idx = 0
+
+    def get_next(self):
+        if self._idx >= len(self._batches):
+            return None
+        batch = self._batches[self._idx]
+        self._idx += 1
+        return batch
+
+
+def quantize(fp32_path: str, int8_path: str, calib_dir: str, n_calib: int = 200):
     try:
-        from onnxruntime.quantization import quantize_dynamic, QuantType
+        from onnxruntime.quantization import (
+            quantize_static, QuantType, QuantFormat, quant_pre_process,
+        )
     except ImportError:
         print("[Quantize] onnxruntime not installed — pip install onnxruntime")
         return
 
-    # Conv → ConvInteger is not implemented in ONNX Runtime CPU EP on ARM.
-    # Quantize only MatMul/Gemm (attention/FC layers) and skip Conv entirely.
-    quantize_dynamic(
-        fp32_path, int8_path,
-        weight_type=QuantType.QInt8,
-        op_types_to_quantize=["MatMul", "Gemm"],
-    )
-    print(f"[Quantize] INT8 model saved → {int8_path}")
+    import tempfile, os
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
+        prep_path = f.name
+
+    try:
+        print(f"[Quantize] Pre-processing model for shape inference …")
+        quant_pre_process(fp32_path, prep_path)
+
+        reader = FaceImageCalibReader(calib_dir, n=n_calib)
+
+        # QDQ format: inserts QuantizeLinear/DequantizeLinear nodes — fully supported
+        # on ONNX Runtime aarch64 CPU EP (unlike ConvInteger/MatMulInteger).
+        quantize_static(
+            prep_path,
+            int8_path,
+            calibration_data_reader=reader,
+            quant_format=QuantFormat.QDQ,
+            per_channel=False,          # per_channel=True is slower on aarch64
+            weight_type=QuantType.QInt8,
+            activation_type=QuantType.QInt8,
+        )
+    finally:
+        os.unlink(prep_path)
+
+    print(f"[Quantize] INT8 (QDQ) model saved → {int8_path}")
 
 
 def verify(model, onnx_path: str, img_size: int):
@@ -117,14 +177,18 @@ def verify(model, onnx_path: str, img_size: int):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=str,  required=True)
-    p.add_argument("--output",     type=str,  default="model.onnx")
+    p.add_argument("--output",     type=str,  default="models/model.onnx")
     p.add_argument("--img_size",   type=int,  default=224)
     p.add_argument("--variant",    type=str,  default=None,
                    help="Override EfficientNet variant (auto-detected from checkpoint)")
     p.add_argument("--verify",     action="store_true",
                    help="Compare ONNX output against PyTorch")
     p.add_argument("--quantize",   action="store_true",
-                   help="Export INT8 dynamic-quantized model (recommended for Raspberry Pi)")
+                   help="Export INT8 QDQ-quantized model (required for Raspberry Pi / aarch64)")
+    p.add_argument("--calib_dir",  type=str,  default=None,
+                   help="Directory of face images for static quantization calibration")
+    p.add_argument("--n_calib",    type=int,  default=200,
+                   help="Number of calibration images (default: 200)")
     return p.parse_args()
 
 
@@ -139,8 +203,10 @@ def main():
         verify(model, args.output, args.img_size)
 
     if args.quantize:
+        if not args.calib_dir:
+            raise SystemExit("[Quantize] --calib_dir is required for static quantization")
         int8_path = args.output.replace(".onnx", "_int8.onnx")
-        quantize(args.output, int8_path)
+        quantize(args.output, int8_path, args.calib_dir, args.n_calib)
         if args.verify:
             verify(model, int8_path, args.img_size)
 
