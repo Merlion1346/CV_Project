@@ -24,17 +24,12 @@ except ImportError:
     USE_TQDM = False
 
 from dataset import build_dataframe, get_transforms
-from model   import EfficientNetHeadPose
+from model   import EfficientNetHeadPose, HeadPoseLoss, N_BINS
 
 
-# ─────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────
-ANGLE_MAX = np.array([90.0, 90.0, 90.0])
-
-
-def denormalize_angles(angles_norm: torch.Tensor) -> np.ndarray:
-    return (angles_norm.cpu().numpy() * ANGLE_MAX)
+def denormalize_angles(angles_deg: torch.Tensor) -> np.ndarray:
+    # HeadPoseLoss.predict() already returns degrees — just convert to numpy
+    return angles_deg.cpu().numpy()
 
 
 def angle_to_direction(yaw: float, pitch: float) -> str:
@@ -118,7 +113,7 @@ def annotate_image(img_bgr, pred_angles, true_angles, pred_dir, true_dir, correc
 # Predict & Visualize
 # ─────────────────────────────────────────────
 @torch.no_grad()
-def predict_and_save(model, df, device, use_amp,
+def predict_and_save(model, loss, df, device, use_amp,
                      img_size, num_samples, output_dir, grid_cols):
 
     transform = get_transforms("val", img_size)
@@ -144,7 +139,7 @@ def predict_and_save(model, df, device, use_amp,
         tensor  = transform(img_pil).unsqueeze(0).to(device)
 
         with torch.amp.autocast(device_type=device.type, enabled=use_amp):
-            pred = model(tensor)   # (1, 3)
+            pred = loss.predict(model(tensor))   # (1, 3) degrees
 
         pred_angles = denormalize_angles(pred[0])          # [yaw, pitch, roll]
         true_angles = np.array([row["yaw"], row["pitch"], row["roll"]], dtype=float)
@@ -237,6 +232,8 @@ def main(args):
     model.load_state_dict(ckpt["model"])
     model.eval()
 
+    loss = HeadPoseLoss(n_bins=N_BINS).to(device)
+
     # 학습과 동일한 split 재현
     df = build_dataframe(args.data_dir)
     _, temp_df = train_test_split(df, test_size=args.val_ratio + 0.05, random_state=42)
@@ -249,6 +246,7 @@ def main(args):
 
     predict_and_save(
         model       = model,
+        loss        = loss,
         df          = target_df,
         device      = device,
         use_amp     = use_amp,
