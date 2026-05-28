@@ -505,7 +505,7 @@ def parse_args():
     p.add_argument("--data_dir",      type=str,   required=True,
                    help="Path to 300W_LP root directory")
     p.add_argument("--output_dir",    type=str,
-                   default=COLAB_OUTPUT_DIR if _is_colab() else "./checkpoints")
+                   default=COLAB_OUTPUT_DIR if _is_colab() else "./models/checkpoints")
     p.add_argument("--variant",       type=str,   default="b0",
                    choices=["b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7"])
     p.add_argument("--epochs",        type=int,   default=50)

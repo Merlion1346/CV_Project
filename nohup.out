@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "/home/lgai/CV_Project/train_300wlp.py", line 33, in <module>
-    import numpy as np
-ModuleNotFoundError: No module named 'numpy'
-usage: 03_loss_comparison.py [-h] [--data_dir DATA_DIR] [--test_dir TEST_DIR]
-                             [--output_dir OUTPUT_DIR] [--epochs EPOCHS]
-                             [--batch_size BATCH_SIZE] [--img_size IMG_SIZE]
-                             [--num_workers NUM_WORKERS] [--quick_test]
-03_loss_comparison.py: error: argument --batch_size: expected one argument

@@ -178,7 +178,7 @@ def parse_args():
     )
     p.add_argument("--checkpoint",  type=str, required=True,
                    help="Path to model checkpoint (.pth)")
-    p.add_argument("--data_dir",    type=str, default="AFLW2000",
+    p.add_argument("--data_dir",    type=str, default="data/AFLW2000",
                    help="Directory containing AFLW2000 .jpg + .mat files")
     p.add_argument("--variant",     type=str, default="b0",
                    choices=["b0","b1","b2","b3","b4","b5","b6","b7"],
