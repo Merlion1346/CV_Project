@@ -15,6 +15,10 @@ EfficientNet Head Pose → Core ML (.mlpackage) 변환 스크립트
 """
 
 import argparse
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
 import torch
 import torch.nn as nn
 import coremltools as ct
