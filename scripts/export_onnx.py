@@ -60,6 +60,7 @@ def load_model(checkpoint_path: str, variant_override, device):
 
 
 def export(model, img_size: int, output_path: str):
+    model.eval()
     dummy = torch.randn(1, 3, img_size, img_size)
 
     torch.onnx.export(
@@ -87,7 +88,7 @@ class FaceImageCalibReader:
     values are calibrated on the actual input distribution.
     """
 
-    def __init__(self, image_dir: str, n: int = 200):
+    def __init__(self, image_dir: str, n: int = 200, img_size: int = 300):
         import cv2
         import os
         self._batches = []
@@ -104,7 +105,7 @@ class FaceImageCalibReader:
             if img is None:
                 continue
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = cv2.resize(img, (224, 224)).astype(np.float32) / 255.0
+            img = cv2.resize(img, (img_size, img_size)).astype(np.float32) / 255.0
             img = (img - mean) / std
             img = img.transpose(2, 0, 1)[np.newaxis]   # HWC → 1CHW
             self._batches.append({"image": img})
@@ -120,7 +121,7 @@ class FaceImageCalibReader:
         return batch
 
 
-def quantize(fp32_path: str, int8_path: str, calib_dir: str, n_calib: int = 200):
+def quantize(fp32_path: str, int8_path: str, calib_dir: str, n_calib: int = 200, img_size: int = 300):
     try:
         from onnxruntime.quantization import (
             quantize_static, QuantType, QuantFormat, quant_pre_process,
@@ -137,7 +138,7 @@ def quantize(fp32_path: str, int8_path: str, calib_dir: str, n_calib: int = 200)
         print(f"[Quantize] Pre-processing model for shape inference …")
         quant_pre_process(fp32_path, prep_path)
 
-        reader = FaceImageCalibReader(calib_dir, n=n_calib)
+        reader = FaceImageCalibReader(calib_dir, n=n_calib, img_size=img_size)
 
         # QDQ format: inserts QuantizeLinear/DequantizeLinear nodes — fully supported
         # on ONNX Runtime aarch64 CPU EP (unlike ConvInteger/MatMulInteger).
@@ -163,6 +164,7 @@ def verify(model, onnx_path: str, img_size: int):
         print("[Verify] onnxruntime not installed — pip install onnxruntime")
         return
 
+    model.eval()
     dummy = torch.randn(1, 3, img_size, img_size)
     with torch.no_grad():
         pt_out = model(dummy).numpy()
@@ -182,7 +184,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=str,  required=True)
     p.add_argument("--output",     type=str,  default="models/model.onnx")
-    p.add_argument("--img_size",   type=int,  default=224)
+    p.add_argument("--img_size",   type=int,  default=300)
     p.add_argument("--variant",    type=str,  default=None,
                    help="Override EfficientNet variant (auto-detected from checkpoint)")
     p.add_argument("--verify",     action="store_true",
@@ -210,7 +212,7 @@ def main():
         if not args.calib_dir:
             raise SystemExit("[Quantize] --calib_dir is required for static quantization")
         int8_path = args.output.replace(".onnx", "_int8.onnx")
-        quantize(args.output, int8_path, args.calib_dir, args.n_calib)
+        quantize(args.output, int8_path, args.calib_dir, args.n_calib, args.img_size)
         if args.verify:
             verify(model, int8_path, args.img_size)
 
