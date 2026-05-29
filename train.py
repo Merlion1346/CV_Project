@@ -7,6 +7,7 @@ Usage:
 import os
 import math
 import argparse
+import random
 import time
 from glob import glob
 from typing import Optional
@@ -116,14 +117,35 @@ def build_dataframe(root_dir: str) -> pd.DataFrame:
     return df
 
 
+class DarkAugment:
+    """Simulate low-light: gamma darkening + sensor noise.
+
+    Applied with probability p. Gamma > 1 compresses highlights → darker image.
+    Gaussian noise mimics camera sensor noise in dim environments.
+    """
+    def __init__(self, p: float = 0.3, gamma_range=(1.5, 3.5), noise_std=0.03):
+        self.p           = p
+        self.gamma_range = gamma_range
+        self.noise_std   = noise_std
+
+    def __call__(self, img: torch.Tensor) -> torch.Tensor:
+        if random.random() >= self.p:
+            return img
+        gamma = random.uniform(*self.gamma_range)
+        img   = img.pow(gamma)                                          # darken
+        noise = torch.randn_like(img) * self.noise_std
+        return (img + noise).clamp(0.0, 1.0)
+
+
 def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compose:
     if mode == "train":
         return transforms.Compose([
             transforms.Resize((img_size + 32, img_size + 32)),
             transforms.RandomCrop(img_size),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2),
+            transforms.ColorJitter(brightness=(0.2, 1.4), contrast=(0.4, 1.4), saturation=0.2),
             transforms.RandomGrayscale(p=0.05),
             transforms.ToTensor(),
+            DarkAugment(p=0.3, gamma_range=(1.5, 3.5), noise_std=0.03),
             transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
         ])
     return transforms.Compose([
@@ -134,9 +156,10 @@ def get_transforms(mode: str = "train", img_size: int = 224) -> transforms.Compo
 
 
 class HeadPoseDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, transform=None):
+    def __init__(self, df: pd.DataFrame, transform=None, hflip: bool = False):
         self.df        = df.reset_index(drop=True)
         self.transform = transform
+        self.hflip     = hflip
 
     def __len__(self):
         return len(self.df)
@@ -145,6 +168,13 @@ class HeadPoseDataset(Dataset):
         row = self.df.iloc[idx]
         img = Image.open(row["path"]).convert("RGB")
         yaw, pitch, roll = row["yaw"], row["pitch"], row["roll"]
+
+        # Horizontal flip: negate yaw and roll, pitch unchanged
+        if self.hflip and random.random() < 0.5:
+            img  = img.transpose(Image.FLIP_LEFT_RIGHT)
+            yaw  = -yaw
+            roll = -roll
+
         if self.transform:
             img = self.transform(img)
         angles = torch.tensor([yaw, pitch, roll], dtype=torch.float32)
@@ -326,7 +356,7 @@ def train(args):
     nw  = args.num_workers if args.num_workers >= 0 else min(os.cpu_count(), 8)
     loaders = {
         split: DataLoader(
-            HeadPoseDataset(sdf, get_transforms(mode, args.img_size)),
+            HeadPoseDataset(sdf, get_transforms(mode, args.img_size), hflip=(split == "train")),
             batch_size=args.batch_size,
             shuffle=(split == "train"),
             num_workers=nw,
