@@ -28,6 +28,20 @@ import sys
 
 ANGLE_MAX = 99.0
 
+LOW_END_DEVICES = [
+    # ~1–5 TOPS NPU / 구형 mid-range — CA73급 타겟과 가장 유사한 성능 구간
+    "Google Pixel 3a",           # Snapdragon 670  / Hexagon 685  ~1.5 TOPS
+    "Google Pixel 3a XL",        # Snapdragon 670  / Hexagon 685  ~1.5 TOPS
+    "Samsung Galaxy Tab A8 (2021)",  # Snapdragon 662 / Hexagon 686  ~2 TOPS
+    "Samsung Galaxy A14 5G",     # Snapdragon 480+ / Hexagon 686  ~2 TOPS
+    "Xiaomi Redmi Note 10 5G",   # Dimensity 700   / APU          ~2 TOPS
+    "Google Pixel 3",            # Snapdragon 845  / Hexagon 685  ~2 TOPS
+    "Google Pixel 3 XL",         # Snapdragon 845  / Hexagon 685  ~2 TOPS
+    "Google Pixel 4a",           # Snapdragon 730G / Hexagon 688  ~4 TOPS
+    "Google Pixel 5",            # Snapdragon 765G / Hexagon 698  ~5 TOPS
+    "Google Pixel 5a 5G",        # Snapdragon 765G / Hexagon 698  ~5 TOPS
+]
+
 DEFAULT_DEVICES = [
     # Google Pixel
     "Google Pixel 3 (Family)",
@@ -122,6 +136,8 @@ def parse_args():
                    help="Skip profiling after compile")
     p.add_argument("--list_devices", action="store_true",
                    help="Print available devices and exit")
+    p.add_argument("--low_end", action="store_true",
+                   help="Use LOW_END_DEVICES (~1-5 TOPS) instead of DEFAULT_DEVICES")
     return p.parse_args()
 
 
@@ -310,7 +326,7 @@ def main():
 
     devices = (
         [d.strip() for d in args.devices.split(",") if d.strip()]
-        if args.devices else DEFAULT_DEVICES
+        if args.devices else (LOW_END_DEVICES if args.low_end else DEFAULT_DEVICES)
     )
     print(f"[AI Hub] Target: {len(devices)} devices | Model: {args.onnx}")
 
