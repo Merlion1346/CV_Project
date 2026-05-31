@@ -18,7 +18,7 @@ import scipy.io as sio
 import torch
 import torch.optim as optim
 from torch.amp import GradScaler
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
@@ -197,7 +197,7 @@ def has_nan(tensor: torch.Tensor, tag: str) -> bool:
 # ─────────────────────────────────────────────
 # Train one epoch
 # ─────────────────────────────────────────────
-def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler):
+def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler, scheduler=None):
     model.train()
     total_loss, all_mae, skipped = 0.0, [], 0
 
@@ -227,6 +227,8 @@ def train_one_epoch(model, loader, optimizer, criterion, device, use_amp, scaler
             skipped += 1; continue
         scaler.step(optimizer)
         scaler.update()
+        if scheduler is not None:
+            scheduler.step()
 
         total_loss += loss.item()
         with torch.no_grad():
@@ -386,7 +388,7 @@ def train(args):
         weight_decay=args.weight_decay,
         fused=use_amp,
     )
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    scheduler = None   # created at Phase 2 transition
     scaler    = GradScaler(device="cuda" if use_amp else "cpu", enabled=use_amp)
     criterion = HeadPoseLoss(axis_weights=(1.0, 2.0, 2.0))
 
@@ -402,17 +404,26 @@ def train(args):
         ckpt = torch.load(last_ckpt_path, map_location=device)
         # Restore phase-2 param group before loading optimizer state
         if ckpt["epoch"] >= args.warmup_epochs:
-            model.unfreeze_top_blocks(num_blocks=3)
+            model.freeze_backbone(False)
             backbone_lr = args.lr * 0.05
             optimizer.add_param_group({
                 "params":       [p for p in model.features.parameters() if p.requires_grad],
                 "lr":           backbone_lr,
                 "weight_decay": args.weight_decay,
             })
-            scheduler.base_lrs.append(backbone_lr)
+            remaining = args.epochs - args.warmup_epochs
+            scheduler = OneCycleLR(
+                optimizer,
+                max_lr=[args.lr * 10, args.lr * 0.5],
+                steps_per_epoch=len(loaders["train"]),
+                epochs=remaining,
+                pct_start=0.1,
+                anneal_strategy="cos",
+            )
+            if ckpt.get("scheduler") is not None:
+                scheduler.load_state_dict(ckpt["scheduler"])
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
-        scheduler.load_state_dict(ckpt["scheduler"])
         scaler.load_state_dict(ckpt["scaler"])
         best_mae    = ckpt["best_metric"]
         start_epoch = ckpt["epoch"] + 1
@@ -439,22 +450,27 @@ def train(args):
         t0 = time.time()
 
         if epoch == args.warmup_epochs + 1 and start_epoch <= args.warmup_epochs + 1:
-            print("[Train] Phase 2 — backbone top blocks unfrozen")
-            model.unfreeze_top_blocks(num_blocks=3)
+            print("[Train] Phase 2 — full backbone unfrozen + OneCycleLR started")
+            model.freeze_backbone(False)
             backbone_lr = args.lr * 0.05
             optimizer.add_param_group({
                 "params":       [p for p in model.features.parameters() if p.requires_grad],
                 "lr":           backbone_lr,
                 "weight_decay": args.weight_decay,
             })
-            scheduler.base_lrs.append(backbone_lr)
-            if hasattr(scheduler, "_last_lr"):
-                scheduler._last_lr.append(backbone_lr)
+            remaining = args.epochs - args.warmup_epochs
+            scheduler = OneCycleLR(
+                optimizer,
+                max_lr=[args.lr * 10, args.lr * 0.5],
+                steps_per_epoch=len(loaders["train"]),
+                epochs=remaining,
+                pct_start=0.1,
+                anneal_strategy="cos",
+            )
 
         train_m = train_one_epoch(model, loaders["train"], optimizer, criterion,
-                                  device, use_amp, scaler)
+                                  device, use_amp, scaler, scheduler)
         val_m   = validate(model, loaders["val"], criterion, device, use_amp)
-        scheduler.step()
 
         elapsed = time.time() - t0
         log = (f"Epoch [{epoch:03d}/{args.epochs}] ({elapsed:.1f}s) | "
@@ -507,7 +523,7 @@ def train(args):
             "epoch":       epoch,
             "model":       model.state_dict(),
             "optimizer":   optimizer.state_dict(),
-            "scheduler":   scheduler.state_dict(),
+            "scheduler":   scheduler.state_dict() if scheduler is not None else None,
             "scaler":      scaler.state_dict(),
             "best_metric": best_mae,
             "variant":     args.variant,
